@@ -307,27 +307,6 @@
           if (!overlay.classList.contains("tap")) hideOverlay();
         });
 
-        function attach(url) {
-          if (video.canPlayType("application/vnd.apple.mpegurl")) {
-            video.src = url;       // iOS/Safari: natives HLS
-            tryPlay();
-          } else {
-            loadHlsJs(function () {
-              if (window.Hls && window.Hls.isSupported()) {
-                var hls = new window.Hls({ lowLatencyMode: true, liveSyncDurationCount: 3 });
-                hls.on(window.Hls.Events.MANIFEST_PARSED, function () { tryPlay(); });
-                hls.on(window.Hls.Events.ERROR, function (e, data) {
-                  if (data && data.fatal) fail("Stream-Fehler – ist der Kanal live?");
-                });
-                hls.loadSource(url);
-                hls.attachMedia(video);
-              } else {
-                fail("Dein Browser kann HLS nicht abspielen.");
-              }
-            });
-          }
-        }
-
         function usherUrl(t) {
           var p = new URLSearchParams();
           p.set("sig", t.signature);
@@ -340,6 +319,53 @@
           p.set("p", String(Math.floor(Math.random() * 1e7)));
           return "https://usher.ttvnw.net/api/channel/hls/" +
             encodeURIComponent(ch) + ".m3u8?" + p.toString();
+        }
+
+        // usher sendet KEIN CORS -> Master-Playlist via Proxy holen.
+        // Eigenen Proxy via &proxy=<prefix> setzbar (Prefix bekommt die
+        // URL-codierte usher-URL angehaengt), sonst Gratis-Proxys.
+        function masterViaProxy(usher) {
+          var custom = params.get("proxy");
+          var proxies = custom ? [custom] : [
+            "https://api.allorigins.win/raw?url=",
+            "https://api.codetabs.com/v1/proxy/?quest="
+          ];
+          var i = 0;
+          function next() {
+            if (i >= proxies.length) return Promise.reject(new Error("proxy"));
+            var pfx = proxies[i++];
+            return fetch(pfx + encodeURIComponent(usher))
+              .then(function (r) { if (!r.ok) throw new Error("bad"); return r.text(); })
+              .then(function (txt) {
+                if (txt.indexOf("#EXTM3U") === 0) return { text: txt };
+                // Twitch-Fehler-JSON ([{"error":"..."}]) = Kanal offline
+                if (txt.indexOf("\"error\"") >= 0) return { offline: true };
+                throw new Error("bad");
+              })
+              .catch(function (e) {
+                if (e && e.message === "offline") throw e;
+                return next();
+              });
+          }
+          return next();
+        }
+
+        function playHlsJs(masterText) {
+          var blobUrl = URL.createObjectURL(
+            new Blob([masterText], { type: "application/vnd.apple.mpegurl" }));
+          loadHlsJs(function () {
+            if (window.Hls && window.Hls.isSupported()) {
+              var hls = new window.Hls({ lowLatencyMode: true, liveSyncDurationCount: 3 });
+              hls.on(window.Hls.Events.MANIFEST_PARSED, function () { tryPlay(); });
+              hls.on(window.Hls.Events.ERROR, function (e, data) {
+                if (data && data.fatal) fail("Stream-Fehler beim Abspielen.");
+              });
+              hls.loadSource(blobUrl);
+              hls.attachMedia(video);
+            } else {
+              fail("Dein Browser kann HLS nicht abspielen.");
+            }
+          });
         }
 
         var body = {
@@ -358,14 +384,28 @@
           .then(function (j) {
             var t = j && j.data && j.data.streamPlaybackAccessToken;
             if (!t || !t.value) throw new Error("no-token");
-            var url = usherUrl(t);
-            return fetch(url).then(function (r) { return r.text(); }).then(function (txt) {
-              if (txt.indexOf("#EXTM3U") !== 0) throw new Error("offline");
-              attach(url);
+            var usher = usherUrl(t);
+
+            // iOS/Safari: natives HLS, Media-Element braucht KEIN CORS.
+            if (video.canPlayType("application/vnd.apple.mpegurl")) {
+              video.addEventListener("error", function () {
+                fail(ch + " ist offline oder nicht ladbar.");
+              }, { once: true });
+              video.src = usher;
+              tryPlay();
+              return;
+            }
+
+            // Android/Chrome: hls.js -> Master via Proxy.
+            return masterViaProxy(usher).then(function (res) {
+              if (res.offline) { fail(ch + " ist gerade offline."); return; }
+              playHlsJs(res.text);
             });
           })
           .catch(function (err) {
             if (err && err.message === "offline") fail(ch + " ist gerade offline.");
+            else if (err && err.message === "proxy")
+              fail("Proxy gerade nicht erreichbar – bitte neu laden.");
             else fail("Konnte den Stream nicht laden.");
           });
       }
