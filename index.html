@@ -279,41 +279,49 @@
           overlay.classList.remove("hidden");
         }
 
+        // Grosser Tap-Button ueber dem ganzen Bild (zuverlaessig in WebViews)
+        function showTap(label) {
+          overlay.className = "overlay tap";
+          overlay.innerHTML = '<div class="big">▶</div><div>' + label + '</div>';
+          overlay.classList.remove("hidden");
+          overlay.onclick = function () {
+            overlay.onclick = null;
+            video.muted = muted;           // Ton an, ausser muted=1
+            var p = video.play();
+            if (p && p.catch) p.catch(function () {
+              video.muted = true; video.play().catch(function () {});
+            });
+            hideOverlay();
+          };
+        }
+
         function tryPlay() {
+          video.muted = muted;
           var pr = video.play();
-          if (pr && pr.catch) {
-            pr.then(function () { if (!overlay.classList.contains("tap")) hideOverlay(); })
-              .catch(function () {
-                // Autoplay mit Ton blockiert -> stumm starten, Tap fuer Ton
-                video.muted = true;
-                video.play().catch(function () {});
-                if (!muted) {
-                  overlay.className = "overlay tap";
-                  overlay.innerHTML = '<div class="big">🔇</div><div>Tippen für Ton</div>';
-                  overlay.classList.remove("hidden");
-                  overlay.addEventListener("click", function () {
-                    video.muted = false;
-                    video.play().catch(function () {});
-                    hideOverlay();
-                  }, { once: true });
-                } else {
-                  hideOverlay();
-                }
+          if (pr && pr.then) {
+            pr.catch(function () {
+              // Autoplay (auch mit Ton) blockiert -> stumm versuchen
+              video.muted = true;
+              var p2 = video.play();
+              if (p2 && p2.catch) p2.catch(function () {
+                // selbst stumm blockiert -> ein Tipp noetig
+                showTap("Tippen zum Starten");
               });
+            });
           }
         }
 
         var started = false;
-        function markStarted() {
+        video.addEventListener("playing", function () {
           started = true;
-          if (!overlay.classList.contains("tap")) hideOverlay();
-        }
-        video.addEventListener("playing", markStarted);
-        video.addEventListener("loadeddata", markStarted);
-        // Watchdog: wenn nach 25s nichts laeuft -> Hinweis statt Endlos-Spinner
+          hideOverlay();
+          // Laeuft stumm, aber Ton war gewuenscht -> Ton-Tipp anbieten
+          if (video.muted && !muted) showTap("Tippen für Ton");
+        });
+        // Watchdog: wenn nach 25s nichts laeuft UND kein Tap-Button -> Hinweis
         setTimeout(function () {
-          if (!started && video.currentTime === 0) {
-            fail("Stream lädt nicht – Proxy/Netz? Mit Button neu laden.");
+          if (!started && !overlay.classList.contains("tap")) {
+            fail("Stream lädt nicht – Netz? Mit Button neu laden.");
           }
         }, 25000);
 
