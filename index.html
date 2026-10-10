@@ -29,6 +29,48 @@
     .chat { flex: 0 0 340px; height: 100%; }
     .chat iframe { width: 100%; height: 100%; }
 
+    /* HLS-Direkt-Player */
+    .video-wrap {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+    }
+    .video-wrap video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+      display: block;
+    }
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      text-align: center;
+      padding: 24px;
+      color: #efeff1;
+      font-size: 15px;
+    }
+    .overlay.tap { background: rgba(0,0,0,0.35); cursor: pointer; }
+    .overlay .big { font-size: 40px; }
+    .overlay button {
+      margin-top: 8px;
+      padding: 10px 18px;
+      border-radius: 6px;
+      border: 0;
+      background: #9147ff;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .hidden { display: none !important; }
+
     /* Schmaler Screen: Player oben, Chat darunter */
     @media (max-width: 768px) {
       #app { flex-direction: column; }
@@ -84,6 +126,7 @@
       var channelRaw = (params.get("channel") || "").trim().toLowerCase();
       var showChat = params.get("chat") === "1";
       var muted = params.get("muted") === "1";
+      var hlsMode = params.get("hls") === "1";
       var host = window.location.hostname;
       var app = document.getElementById("app");
 
@@ -153,6 +196,15 @@
 
       var channel = encodeURIComponent(channelRaw);
 
+      // Direkt-Player-Modus: laedt den rohen HLS-Stream in ein <video>.
+      // Braucht KEIN parent -> funktioniert dort, wo Twitchs iframe-Player
+      // blockiert wird (z. B. Notion-Handy-App, In-App-WebViews).
+      if (hlsMode) {
+        startHls(channelRaw);
+        document.title = channelRaw + " · Twitch";
+        return;
+      }
+
       // Twitch prueft frame-ancestors ueber die GESAMTE iframe-Kette.
       // Beim Einbetten in Notion ist das top-Frame notion.so -> diese
       // Domains muessen als zusaetzliche parent-Parameter mit, sonst
@@ -184,6 +236,139 @@
       }
 
       document.title = channelRaw + " · Twitch";
+
+      // ----- HLS-Direkt-Player (kein parent noetig) -----
+      function loadHlsJs(cb) {
+        if (window.Hls) { cb(); return; }
+        var s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js";
+        s.onload = cb;
+        s.onerror = function () { cb(); };
+        document.head.appendChild(s);
+      }
+
+      function startHls(ch) {
+        var CID = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+        var root = document.getElementById("app");
+        root.innerHTML = "";
+
+        var wrap = document.createElement("div");
+        wrap.className = "video-wrap";
+        var video = document.createElement("video");
+        video.setAttribute("playsinline", "");
+        video.setAttribute("webkit-playsinline", "");
+        video.controls = true;
+        video.autoplay = true;
+        video.muted = muted;
+        wrap.appendChild(video);
+
+        var overlay = document.createElement("div");
+        overlay.className = "overlay";
+        overlay.textContent = "Lade Stream…";
+        wrap.appendChild(overlay);
+        root.appendChild(wrap);
+
+        function hideOverlay() { overlay.classList.add("hidden"); }
+        function fail(text) {
+          overlay.className = "overlay";
+          overlay.innerHTML = '<div class="big">⚠️</div><div>' + text + '</div>';
+          var b = document.createElement("button");
+          b.textContent = "Neu laden";
+          b.addEventListener("click", function () { location.reload(); });
+          overlay.appendChild(b);
+          overlay.classList.remove("hidden");
+        }
+
+        function tryPlay() {
+          var pr = video.play();
+          if (pr && pr.catch) {
+            pr.then(function () { if (!overlay.classList.contains("tap")) hideOverlay(); })
+              .catch(function () {
+                // Autoplay mit Ton blockiert -> stumm starten, Tap fuer Ton
+                video.muted = true;
+                video.play().catch(function () {});
+                if (!muted) {
+                  overlay.className = "overlay tap";
+                  overlay.innerHTML = '<div class="big">🔇</div><div>Tippen für Ton</div>';
+                  overlay.classList.remove("hidden");
+                  overlay.addEventListener("click", function () {
+                    video.muted = false;
+                    video.play().catch(function () {});
+                    hideOverlay();
+                  }, { once: true });
+                } else {
+                  hideOverlay();
+                }
+              });
+          }
+        }
+
+        video.addEventListener("playing", function () {
+          if (!overlay.classList.contains("tap")) hideOverlay();
+        });
+
+        function attach(url) {
+          if (video.canPlayType("application/vnd.apple.mpegurl")) {
+            video.src = url;       // iOS/Safari: natives HLS
+            tryPlay();
+          } else {
+            loadHlsJs(function () {
+              if (window.Hls && window.Hls.isSupported()) {
+                var hls = new window.Hls({ lowLatencyMode: true, liveSyncDurationCount: 3 });
+                hls.on(window.Hls.Events.MANIFEST_PARSED, function () { tryPlay(); });
+                hls.on(window.Hls.Events.ERROR, function (e, data) {
+                  if (data && data.fatal) fail("Stream-Fehler – ist der Kanal live?");
+                });
+                hls.loadSource(url);
+                hls.attachMedia(video);
+              } else {
+                fail("Dein Browser kann HLS nicht abspielen.");
+              }
+            });
+          }
+        }
+
+        function usherUrl(t) {
+          var p = new URLSearchParams();
+          p.set("sig", t.signature);
+          p.set("token", t.value);
+          p.set("allow_source", "true");
+          p.set("allow_audio_only", "true");
+          p.set("fast_bread", "true");
+          p.set("player", "twitchweb");
+          p.set("type", "any");
+          p.set("p", String(Math.floor(Math.random() * 1e7)));
+          return "https://usher.ttvnw.net/api/channel/hls/" +
+            encodeURIComponent(ch) + ".m3u8?" + p.toString();
+        }
+
+        var body = {
+          operationName: "PlaybackAccessToken",
+          variables: { isLive: true, login: ch, isVod: false, vodID: "", playerType: "site" },
+          extensions: { persistedQuery: { version: 1,
+            sha256Hash: "0828119ded1c13477966434e15800ff57ddacf13ba1911c129dc2200705b0712" } }
+        };
+
+        fetch("https://gql.twitch.tv/gql", {
+          method: "POST",
+          headers: { "Client-ID": CID, "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            var t = j && j.data && j.data.streamPlaybackAccessToken;
+            if (!t || !t.value) throw new Error("no-token");
+            var url = usherUrl(t);
+            return fetch(url).then(function (r) { return r.text(); }).then(function (txt) {
+              if (txt.indexOf("#EXTM3U") !== 0) throw new Error("offline");
+              attach(url);
+            });
+          })
+          .catch(function (err) {
+            if (err && err.message === "offline") fail(ch + " ist gerade offline.");
+            else fail("Konnte den Stream nicht laden.");
+          });
+      }
     })();
   </script>
 </body>
