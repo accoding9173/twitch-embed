@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Twitch Embed</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #18181b;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: #efeff1;
+    }
+    #app {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: row;
+    }
+    #app iframe {
+      border: 0;
+      display: block;
+    }
+    .player { flex: 1 1 auto; height: 100%; }
+    .player iframe { width: 100%; height: 100%; }
+    .chat { flex: 0 0 340px; height: 100%; }
+    .chat iframe { width: 100%; height: 100%; }
+
+    /* Schmaler Screen: Player oben, Chat darunter */
+    @media (max-width: 768px) {
+      #app { flex-direction: column; }
+      .chat { flex: 0 0 40%; width: 100%; }
+    }
+
+    /* Eingabemaske */
+    #form {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 24px;
+    }
+    #form h1 { font-size: 20px; font-weight: 600; color: #efeff1; }
+    #form p { font-size: 14px; color: #adadb8; }
+    #form .row { display: flex; gap: 8px; width: 100%; max-width: 360px; }
+    #form input {
+      flex: 1 1 auto;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid #3a3a3d;
+      background: #0e0e10;
+      color: #efeff1;
+      font-size: 15px;
+      outline: none;
+    }
+    #form input:focus { border-color: #9147ff; }
+    #form button {
+      padding: 10px 18px;
+      border-radius: 6px;
+      border: 0;
+      background: #9147ff;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #form button:hover { background: #772ce8; }
+    #form .err { color: #ff6b6b; font-size: 13px; min-height: 16px; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>
+    (function () {
+      var VALID = /^[a-z0-9_]+$/;
+      var params = new URLSearchParams(window.location.search);
+      var channelRaw = (params.get("channel") || "").trim().toLowerCase();
+      var showChat = params.get("chat") === "1";
+      var muted = params.get("muted") === "1";
+      var host = window.location.hostname;
+      var app = document.getElementById("app");
+
+      function showForm(prefill, errorMsg) {
+        document.body.innerHTML = "";
+        var form = document.createElement("div");
+        form.id = "form";
+
+        var h1 = document.createElement("h1");
+        h1.textContent = "Twitch-Kanal eingeben";
+        form.appendChild(h1);
+
+        var p = document.createElement("p");
+        p.textContent = "Nur Buchstaben (a-z), Zahlen und Unterstrich.";
+        form.appendChild(p);
+
+        var err = document.createElement("div");
+        err.className = "err";
+        err.textContent = errorMsg || "";
+        form.appendChild(err);
+
+        var row = document.createElement("div");
+        row.className = "row";
+
+        var input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = "z. B. papaplatte";
+        input.value = prefill || "";
+        input.autofocus = true;
+        row.appendChild(input);
+
+        var btn = document.createElement("button");
+        btn.textContent = "Los";
+        row.appendChild(btn);
+
+        form.appendChild(row);
+        document.body.appendChild(form);
+
+        function go() {
+          var val = input.value.trim().toLowerCase();
+          if (!VALID.test(val)) {
+            err.textContent = "Ungültiger Kanalname.";
+            return;
+          }
+          var url = new URL(window.location.href);
+          url.search = "";
+          url.searchParams.set("channel", val);
+          window.location.href = url.toString();
+        }
+
+        btn.addEventListener("click", go);
+        input.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") go();
+        });
+        input.focus();
+      }
+
+      if (!channelRaw) {
+        showForm("", "");
+        return;
+      }
+
+      if (!VALID.test(channelRaw)) {
+        showForm(channelRaw, "Ungültiger Kanalname (nur a-z, 0-9, _).");
+        return;
+      }
+
+      var channel = encodeURIComponent(channelRaw);
+      var parent = encodeURIComponent(host);
+
+      var player = document.createElement("div");
+      player.className = "player";
+      var playerFrame = document.createElement("iframe");
+      playerFrame.src = "https://player.twitch.tv/?channel=" + channel +
+        "&parent=" + parent + "&muted=" + (muted ? "true" : "false");
+      playerFrame.allowFullscreen = true;
+      playerFrame.setAttribute("allow", "autoplay; fullscreen");
+      player.appendChild(playerFrame);
+      app.appendChild(player);
+
+      if (showChat) {
+        var chat = document.createElement("div");
+        chat.className = "chat";
+        var chatFrame = document.createElement("iframe");
+        chatFrame.src = "https://www.twitch.tv/embed/" + channel +
+          "/chat?parent=" + parent + "&darkpopout";
+        chat.appendChild(chatFrame);
+        app.appendChild(chat);
+      }
+
+      document.title = channelRaw + " · Twitch";
+    })();
+  </script>
+</body>
+</html>
