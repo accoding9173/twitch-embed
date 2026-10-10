@@ -152,13 +152,22 @@
       }
 
       var channel = encodeURIComponent(channelRaw);
-      var parent = encodeURIComponent(host);
+
+      // Twitch prueft frame-ancestors ueber die GESAMTE iframe-Kette.
+      // Beim Einbetten in Notion ist das top-Frame notion.so -> diese
+      // Domains muessen als zusaetzliche parent-Parameter mit, sonst
+      // blockt Twitch mit ERR_BLOCKED_BY_RESPONSE.
+      var parents = [host, "www.notion.so", "notion.so"];
+      var parentQS = parents
+        .filter(function (v, i) { return v && parents.indexOf(v) === i; })
+        .map(function (p) { return "parent=" + encodeURIComponent(p); })
+        .join("&");
 
       var player = document.createElement("div");
       player.className = "player";
       var playerFrame = document.createElement("iframe");
       playerFrame.src = "https://player.twitch.tv/?channel=" + channel +
-        "&parent=" + parent + "&muted=" + (muted ? "true" : "false");
+        "&" + parentQS + "&muted=" + (muted ? "true" : "false");
       playerFrame.allowFullscreen = true;
       playerFrame.setAttribute("allow", "autoplay; fullscreen");
       player.appendChild(playerFrame);
@@ -169,7 +178,7 @@
         chat.className = "chat";
         var chatFrame = document.createElement("iframe");
         chatFrame.src = "https://www.twitch.tv/embed/" + channel +
-          "/chat?parent=" + parent + "&darkpopout";
+          "/chat?" + parentQS + "&darkpopout";
         chat.appendChild(chatFrame);
         app.appendChild(chat);
       }
