@@ -303,9 +303,19 @@
           }
         }
 
-        video.addEventListener("playing", function () {
+        var started = false;
+        function markStarted() {
+          started = true;
           if (!overlay.classList.contains("tap")) hideOverlay();
-        });
+        }
+        video.addEventListener("playing", markStarted);
+        video.addEventListener("loadeddata", markStarted);
+        // Watchdog: wenn nach 25s nichts laeuft -> Hinweis statt Endlos-Spinner
+        setTimeout(function () {
+          if (!started && video.currentTime === 0) {
+            fail("Stream lädt nicht – Proxy/Netz? Mit Button neu laden.");
+          }
+        }, 25000);
 
         function usherUrl(t) {
           var p = new URLSearchParams();
